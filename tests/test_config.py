@@ -26,6 +26,7 @@ def test_defaults_and_secrets_from_env(tmp_path):
     assert cfg.api.base_url.endswith("/api")
     assert cfg.api.timeout_s == 15.0
     assert cfg.detector.weights == "bestn.pt"
+    assert cfg.detector.conf == 0.25 and cfg.detector.tracker_yaml == ""
     assert cfg.pipeline.rotation_angles == (0.0, 15.0)
     assert cfg.pipeline.max_crops == 5
     assert cfg.pipeline.min_ocr_conf == 0.1

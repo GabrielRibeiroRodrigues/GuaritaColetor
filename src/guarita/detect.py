@@ -7,11 +7,13 @@ from .models import Detection
 
 log = logging.getLogger(__name__)
 
+DEFAULT_TRACKER_YAML = os.path.join(os.path.dirname(os.path.abspath(__file__)), "bytetrack_plates.yaml")
+
 
 class PlateDetector:
     """YOLO de placas com rastreio ByteTrack. Uma instância por câmera (o rastreador guarda estado)."""
 
-    def __init__(self, weights: str, imgsz: int = 416, conf: float = 0.1, model=None):
+    def __init__(self, weights: str, imgsz: int = 416, conf: float = 0.25, model=None, tracker_yaml: str = ""):
         if model is None:
             if not os.path.isfile(weights):
                 raise FileNotFoundError(
@@ -26,10 +28,11 @@ class PlateDetector:
         self._model = model
         self._imgsz = imgsz
         self._conf = conf
+        self._tracker = os.path.abspath(tracker_yaml) if tracker_yaml else DEFAULT_TRACKER_YAML
 
     def detect(self, frame) -> list[Detection]:
         result = self._model.track(
-            frame, imgsz=self._imgsz, conf=self._conf, persist=True, tracker="bytetrack.yaml", verbose=False)[0]
+            frame, imgsz=self._imgsz, conf=self._conf, persist=True, tracker=self._tracker, verbose=False)[0]
         boxes = result.boxes
         if boxes is None or getattr(boxes, "id", None) is None:
             return []

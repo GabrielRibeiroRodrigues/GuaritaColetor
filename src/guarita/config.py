@@ -23,7 +23,9 @@ class ApiConfig:
 class DetectorConfig:
     weights: str = "bestn.pt"
     imgsz: int = 416
-    conf: float = 0.1
+    # 0.25 = conf efetivo do legado (o ">= 0.1" do main.py era um no-op sobre o padrão do Ultralytics).
+    conf: float = 0.25
+    tracker_yaml: str = ""  # vazio = usa o bytetrack_plates.yaml embutido (limiares alinhados a `conf`)
 
 
 @dataclass(frozen=True)

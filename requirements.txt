@@ -6,6 +6,8 @@ numpy>=2.0.0,<2.3.0
 scipy==1.16.1
 filterpy==1.4.5
 lapx>=0.5.5
+# ATENÇÃO: o par paddleocr/paddlepaddle abaixo NÃO foi verificado (OCR 2.x com Paddle 3.x); só confie
+# nestes pins depois que `python tools/check_env.py caminhoestn.pt` passar no ambiente de execução.
 paddlepaddle==3.1.0
 paddleocr==2.10.0
 requests>=2.31

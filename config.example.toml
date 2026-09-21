@@ -8,7 +8,8 @@ timeout_s = 15
 [detector]
 weights = "bestn.pt"
 imgsz = 416
-conf = 0.1
+conf = 0.25            # igual ao efetivo do legado (Ultralytics); mantenha o bytetrack_plates.yaml alinhado
+# tracker_yaml = "meu_bytetrack.yaml"   # opcional; padrão: src/guarita/bytetrack_plates.yaml
 
 [pipeline]
 target_fps = 8

@@ -1,0 +1,11 @@
+# Rastreador ByteTrack para placas.
+# O legado usava, na prática, o conf padrão do Ultralytics (0.25): o filtro ">= 0.1" do main.py era um no-op.
+# O detector filtra em detector.conf (0.25); os limiares abaixo ficam alinhados a ele para que o rastreador
+# NÃO imponha uma segunda porta (o bytetrack.yaml padrão usa new_track_thresh 0.6 e descartaria placas
+# distantes de baixa confiança). Ao alterar detector.conf, altere track_high_thresh/new_track_thresh junto.
+tracker_type: bytetrack
+track_high_thresh: 0.25
+track_low_thresh: 0.1
+new_track_thresh: 0.25
+track_buffer: 30
+match_thresh: 0.8

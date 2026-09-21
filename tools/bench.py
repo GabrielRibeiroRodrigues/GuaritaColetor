@@ -34,7 +34,8 @@ def cmd_run(args) -> int:
     cfg = load_config(args.config, require_secrets=False)
     camera = cfg.cameras[0]
     source = FileSource(args.video, cfg.pipeline.target_fps)
-    detector = PlateDetector(cfg.detector.weights, cfg.detector.imgsz, cfg.detector.conf)
+    detector = PlateDetector(cfg.detector.weights, cfg.detector.imgsz, cfg.detector.conf,
+                             tracker_yaml=cfg.detector.tracker_yaml)
 
     def executor_factory():
         return ProcessPoolExecutor(max_workers=cfg.pipeline.ocr_workers, initializer=init_worker,

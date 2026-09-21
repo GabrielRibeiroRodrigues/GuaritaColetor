@@ -31,6 +31,13 @@ Se o `pip` não resolver as versões juntas (torch/paddle/numpy), ajuste os pins
 
 O programa **não inicia** sem o arquivo de pesos do detector.
 
+Limiar do detector: `detector.conf = 0.25` reproduz o comportamento efetivo do legado (o `>= 0.1` do `main.py` era um no-op
+sobre o padrão 0.25 do Ultralytics). O rastreador usa `src/guarita/bytetrack_plates.yaml`, com `track_high_thresh` e
+`new_track_thresh` alinhados a esse valor (o `bytetrack.yaml` padrão descartaria placas com confiança < 0.6); para
+outro arquivo use `detector.tracker_yaml`. Ao mudar `conf`, mude o YAML junto.
+
+Na partida o coletor aquece o pool de OCR (carga do PaddleOCR) antes de abrir as câmeras, aguardando até 120 s.
+
 ## Medir antes de trocar (critério de aceite)
 
 ```powershell
