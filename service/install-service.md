@@ -20,7 +20,7 @@ nssm start GuaritaColetor
 
 - **Conta do serviço:** o NSSM usa LocalSystem por padrão, cujo perfil (`C:\Windows\system32\config\systemprofile`) quebra o cache
   de modelos do PaddleOCR (`~/.paddleocr`, baixado no primeiro uso) e o ambiente/variáveis do RTSP. Crie um usuário local
-  dedicado (ex.: `guarita`), dê a ele permissão de escrita em `C:\guarita` e rode `python tools\check_env.py C:\guaritabestn.pt`
+  dedicado (ex.: `guarita`), dê a ele permissão de escrita em `C:\guarita` e rode `python tools\check_env.py C:\guarita\bestn.pt`
   **com esse mesmo usuário** (`runas /user:guarita ...`) para baixar os modelos no perfil certo antes de iniciar o serviço.
 - Na partida o coletor aquece o OCR (até 120 s) antes de abrir as câmeras; um erro de inicialização do Paddle aparece no log.
 
