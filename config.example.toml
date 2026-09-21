@@ -1,0 +1,36 @@
+heartbeat_interval_s = 60
+stale_after_s = 30
+
+[api]
+base_url = "https://campusinteligente.ifsuldeminas.edu.br/gestaotransito/api"
+timeout_s = 15
+
+[detector]
+weights = "bestn.pt"
+imgsz = 416
+conf = 0.1
+
+[pipeline]
+target_fps = 8
+close_after_s = 1.5
+max_age_s = 20
+max_crops = 5
+fuse_window_s = 20
+rotation_angles = [0, 15]
+min_ocr_conf = 0.1
+ocr_workers = 2
+ocr_timeout_s = 10
+failures_dir = "data/failures"
+failures_ttl_h = 24
+
+[outbox]
+path = "data/outbox.sqlite"
+max_pending = 50000
+delivered_ttl_h = 24
+
+# URL RTSP e chave da API vêm de variáveis de ambiente (nunca escreva o segredo aqui).
+[[cameras]]
+id = "cam-01"
+direction = "entrada"          # "entrada" ou "saída"
+rtsp_env = "GUARITA_RTSP_CAM01"
+api_key_env = "GUARITA_API_KEY_CAM01"
