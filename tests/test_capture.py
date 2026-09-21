@@ -101,3 +101,14 @@ def test_file_source_steps_and_reports_video_time():
 def test_file_source_missing_video():
     with pytest.raises(FileNotFoundError):
         FileSource("nada.mp4", 5, open_fn=lambda path: FakeCap(opened=False))
+
+
+def test_open_rtsp_passes_explicit_timeouts(monkeypatch):
+    import cv2
+    from guarita import capture
+    seen = {}
+    monkeypatch.setattr(cv2, "VideoCapture", lambda *args: seen.setdefault("args", args))
+    capture.open_rtsp("rtsp://x")
+    url, backend, params = seen["args"]
+    assert url == "rtsp://x" and backend == cv2.CAP_FFMPEG
+    assert params == [cv2.CAP_PROP_OPEN_TIMEOUT_MSEC, 5000, cv2.CAP_PROP_READ_TIMEOUT_MSEC, 5000]

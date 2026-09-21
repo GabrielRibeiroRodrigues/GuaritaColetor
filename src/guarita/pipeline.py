@@ -35,10 +35,14 @@ class FailureStore:
         self._clock = clock
 
     def save(self, track: ClosedTrack, reason: str) -> str:
-        os.makedirs(self._dir, exist_ok=True)
         path = os.path.join(self._dir, f"{external_id(track)}-{reason}.jpg")
-        with open(path, "wb") as fh:
-            fh.write(_jpeg(track.crops[0].image))
+        try:
+            os.makedirs(self._dir, exist_ok=True)
+            with open(path, "wb") as fh:
+                fh.write(_jpeg(track.crops[0].image))
+        except (OSError, IndexError) as exc:  # nunca custa uma leitura
+            log.warning("Não foi possível guardar o recorte de falha %s: %s", path, exc)
+            return ""
         return path
 
     def purge(self, now: float | None = None) -> int:
@@ -147,7 +151,10 @@ class ListSink:
 def drain_results(dispatcher: OcrDispatcher, aggregators: dict[str, Aggregator], sink) -> list[Reading]:
     accepted = []
     for outcome in dispatcher.poll():
-        reading = aggregators[outcome.track.camera_id].handle(outcome)
-        if reading is not None and sink.add(reading):
-            accepted.append(reading)
+        try:
+            reading = aggregators[outcome.track.camera_id].handle(outcome)
+            if reading is not None and sink.add(reading):
+                accepted.append(reading)
+        except Exception:  # noqa: BLE001 - um item ruim não pode descartar o resto do lote
+            log.exception("Falha ao processar o resultado de OCR %s", external_id(outcome.track))
     return accepted

@@ -114,3 +114,31 @@ def test_end_to_end_reading_lands_in_the_sink():
     assert reading.external_id == "0-1"
     assert reading.timestamp == 0.0
     assert reading.direction == "entrada"
+
+
+def test_failure_store_survives_oserror(tmp_path):
+    blocker = tmp_path / "arquivo"
+    blocker.write_text("x")
+    store = FailureStore(str(blocker / "sub"), ttl_h=24)      # makedirs falha (pai é um arquivo)
+    assert store.save(track(), "timeout") == ""
+
+
+def test_drain_results_keeps_the_rest_of_the_batch_when_one_outcome_fails():
+    class Fixed:
+        def poll(self):
+            return [outcome([("ABC1234", 0.9)], tid=1), outcome([("ABC1234", 0.9)], tid=2),
+                    outcome([("XYZ9876", 0.9)], tid=3)]
+
+    class Boom(Aggregator):
+        calls = 0
+
+        def handle(self, out):
+            Boom.calls += 1
+            if out.track.track_id == 1:
+                raise RuntimeError("boom")
+            return super().handle(out)
+
+    sink = ListSink()
+    accepted = drain_results(Fixed(), {"cam-01": Boom(CAMERA, PipelineConfig(), None)}, sink)
+    assert Boom.calls == 3
+    assert [r.plate for r in accepted] == ["ABC1234", "XYZ9876"]

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import logging
 import threading
+import time
 from dataclasses import dataclass
 from datetime import datetime, timezone
 
@@ -20,6 +21,20 @@ class Delivery:
 
 def _iso(ts: float) -> str:
     return datetime.fromtimestamp(ts, tz=timezone.utc).isoformat(timespec="milliseconds")
+
+
+MAX_UNEXPECTED_ATTEMPTS = 10
+AUTH_LOG_INTERVAL_S = 600.0
+_auth_logged: dict[str, float] = {}
+
+
+def _log_auth_failure(camera_id: str, now: float | None = None) -> None:
+    """Loga o 401 no máximo uma vez por câmera a cada 10 min (não enche o log rotativo)."""
+    now = time.monotonic() if now is None else now
+    last = _auth_logged.get(camera_id)
+    if last is None or now - last >= AUTH_LOG_INTERVAL_S:
+        _auth_logged[camera_id] = now
+        log.error("API recusou a chave da câmera %s (401); nova tentativa com espera crescente", camera_id)
 
 
 class ApiClient:
@@ -72,12 +87,22 @@ def deliver_next(outbox: Outbox, client: ApiClient, api_keys: dict[str, str], no
     except requests.RequestException as exc:
         outbox.mark_retry(row.id, f"rede: {exc}", now)
         return Delivery("retry", str(exc))
+    except Exception as exc:  # noqa: BLE001 - linha envenenada não pode travar a cabeça da fila
+        if row.attempts + 1 >= MAX_UNEXPECTED_ATTEMPTS:
+            outbox.mark_failed(row.id, f"erro inesperado: {exc!r}")
+            log.error("Leitura %s descartada após %d erros inesperados: %r",
+                      row.external_id, MAX_UNEXPECTED_ATTEMPTS, exc)
+            return Delivery("failed", f"inesperado: {exc!r}")
+        outbox.mark_retry(row.id, f"inesperado: {exc!r}", now)
+        log.warning("Erro inesperado ao enviar %s: %r", row.external_id, exc)
+        return Delivery("retry", f"inesperado: {exc!r}")
 
     if status in (200, 201):
         outbox.mark_delivered(row.id, now)
         return Delivery("delivered")
     if status == 401:
-        log.error("API recusou a chave da câmera %s (401); envio pausado", row.camera_id)
+        outbox.mark_retry(row.id, "401", now)  # espera crescente; as outras linhas/câmeras seguem
+        _log_auth_failure(row.camera_id)
         return Delivery("auth", text)
     if status in (413, 415) and row.image:
         outbox.drop_image(row.id)
@@ -91,13 +116,16 @@ def deliver_next(outbox: Outbox, client: ApiClient, api_keys: dict[str, str], no
 
 
 def run_sender(outbox: Outbox, client: ApiClient, api_keys: dict[str, str], stop: threading.Event,
-               idle_s: float = 1.0, auth_pause_s: float = 30.0) -> None:
+               idle_s: float = 1.0) -> None:
+    errors = 0
     while not stop.is_set():
         try:
             result = deliver_next(outbox, client, api_keys)
+            errors = 0
             if result.outcome == "delivered":
                 continue
-            stop.wait(auth_pause_s if result.outcome == "auth" else idle_s)
-        except Exception:  # noqa: BLE001 - a thread de envio nunca pode morrer
-            log.exception("Erro inesperado no envio")
             stop.wait(idle_s)
+        except Exception:  # noqa: BLE001 - a thread de envio nunca pode morrer
+            errors += 1
+            log.exception("Erro inesperado no envio")
+            stop.wait(min(60.0, idle_s * 2 ** min(errors, 6)))

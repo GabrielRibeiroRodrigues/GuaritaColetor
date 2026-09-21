@@ -28,10 +28,19 @@ class FrameThrottle:
         return False
 
 
+RTSP_TIMEOUT_MS = 5000
+
+
+def open_rtsp(url: str):
+    """Abre o RTSP com timeouts explícitos de abertura e de leitura (o `stimeout` do FFmpeg foi removido)."""
+    return cv2.VideoCapture(url, cv2.CAP_FFMPEG, [
+        cv2.CAP_PROP_OPEN_TIMEOUT_MSEC, RTSP_TIMEOUT_MS, cv2.CAP_PROP_READ_TIMEOUT_MSEC, RTSP_TIMEOUT_MS])
+
+
 class RtspSource:
     exhausted = False
 
-    def __init__(self, url: str, target_fps: float, open_fn=cv2.VideoCapture, clock=time.time,
+    def __init__(self, url: str, target_fps: float, open_fn=open_rtsp, clock=time.time,
                  monotonic=time.monotonic, max_backoff_s: float = 30.0, should_stop=lambda: False):
         self._url = url
         self._open_fn = open_fn

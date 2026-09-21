@@ -88,12 +88,63 @@ def test_client_errors_are_final(box, api):
     assert box.counts()["failed"] == 1
 
 
-def test_401_pauses_but_keeps_the_reading(box, api):
-    box.add(make_reading(1))
+def test_401_backs_off_but_keeps_the_reading_and_does_not_block_others(box, api):
+    box.add(make_reading(1, camera_id="cam-bad"))
+    box.add(make_reading(2))
     api.responses = [401]
-    assert deliver(box, ApiClient(api.base_url)).outcome == "auth"
-    assert box.pending_count() == 1
-    assert box.next_due(now=time.time() + 1).attempts == 0
+    keys = {"cam-bad": "X", "cam-01": "KEY"}
+    assert deliver(box, ApiClient(api.base_url), keys).outcome == "auth"
+    assert box.pending_count() == 2
+    assert box.next_due(now=time.time() + 1).external_id == "ext-2"      # a linha 401 saiu da frente
+    assert deliver(box, ApiClient(api.base_url), keys).outcome == "delivered"
+    bad = box.next_due(now=time.time() + 3600)
+    assert bad.external_id == "ext-1" and bad.attempts == 1
+
+
+def test_401_log_is_rate_limited_per_camera(caplog):
+    from guarita import sender
+    sender._auth_logged.clear()
+    with caplog.at_level("ERROR"):
+        sender._log_auth_failure("cam-01", now=0.0)
+        sender._log_auth_failure("cam-01", now=100.0)
+        sender._log_auth_failure("cam-02", now=100.0)
+        sender._log_auth_failure("cam-01", now=601.0)
+    assert len(caplog.records) == 3
+
+
+class Poison:
+    def post_reading(self, api_key, row):
+        if row.external_id == "ext-1":
+            raise OverflowError("timestamp absurdo")
+        return 201, "ok"
+
+
+def test_poison_row_backs_off_then_fails_and_others_are_delivered(box):
+    box.add(make_reading(1))
+    box.add(make_reading(2))
+    now = 1000.0
+    delays = []
+    waits = []
+    original = box.mark_retry
+
+    def spy(row_id, error, at=None):
+        waits.append(original(row_id, error, at))
+        return waits[-1]
+
+    box.mark_retry = spy
+    for _ in range(9):
+        assert deliver_next(box, Poison(), KEYS, now=now).outcome == "retry"
+        row = box.next_due(now=now + 1e6)
+        delays.append(row.attempts)
+
+        # a linha envenenada fica para depois; a seguinte é entregue
+        if _ == 0:
+            assert deliver_next(box, Poison(), KEYS, now=now).outcome == "delivered"
+        now += 1e6
+    assert delays == list(range(1, 10))
+    assert waits[0] < waits[1] < waits[2]                                  # espera crescente
+    assert deliver_next(box, Poison(), KEYS, now=now).outcome == "failed"
+    assert box.counts() == {"pending": 0, "delivered": 1, "failed": 1}
 
 
 def test_413_drops_the_image_and_resends_as_json(box, api):
