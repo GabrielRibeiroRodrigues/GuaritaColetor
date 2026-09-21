@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import threading
 from dataclasses import dataclass, field
 
 import cv2
@@ -29,8 +30,13 @@ class TrackManager:
         self._max_age = max_age_s
         self._max_crops = max_crops
         self._tracks: dict[int, _State] = {}
+        self._lock = threading.RLock()  # update (thread da câmera) e flush (parada) nunca correm juntos
 
     def update(self, frame: np.ndarray, detections: list[Detection], now: float) -> list[ClosedTrack]:
+        with self._lock:
+            return self._update(frame, detections, now)
+
+    def _update(self, frame: np.ndarray, detections: list[Detection], now: float) -> list[ClosedTrack]:
         height, width = frame.shape[:2]
         for det in detections:
             x1, y1, x2, y2 = det.box
@@ -50,7 +56,8 @@ class TrackManager:
         return self._collect(now, force=False)
 
     def flush(self, now: float) -> list[ClosedTrack]:
-        return self._collect(now, force=True)
+        with self._lock:
+            return self._collect(now, force=True)
 
     def _offer(self, state: _State, crop: Crop) -> None:
         if len(state.crops) < self._max_crops:

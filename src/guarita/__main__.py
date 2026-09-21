@@ -44,31 +44,36 @@ def main(argv=None) -> int:
     os.makedirs(os.path.dirname(cfg.outbox.path) or ".", exist_ok=True)
     outbox = Outbox(cfg.outbox.path, cfg.outbox.max_pending)
 
-    def executor_factory():
-        return ProcessPoolExecutor(
-            max_workers=cfg.pipeline.ocr_workers, initializer=init_worker, initargs=(make_paddle_engine,))
-
-    app = App(
-        cfg,
-        source_factory=lambda cam: RtspSource(cam.rtsp_url, cfg.pipeline.target_fps),
-        detector_factory=lambda cam: PlateDetector(cfg.detector.weights, cfg.detector.imgsz, cfg.detector.conf),
-        executor_factory=executor_factory,
-        client=ApiClient(cfg.api.base_url, cfg.api.timeout_s),
-        outbox=outbox,
-    )
-
     stop = threading.Event()
     for sig in (signal.SIGINT, signal.SIGTERM):
         signal.signal(sig, lambda *_: stop.set())
 
-    log.info("Coletor iniciado (%d câmera(s))", len(cfg.cameras))
-    app.start()
+    def executor_factory():
+        return ProcessPoolExecutor(
+            max_workers=cfg.pipeline.ocr_workers, initializer=init_worker, initargs=(make_paddle_engine,))
+
+    app = None
     try:
+        app = App(
+            cfg,
+            source_factory=lambda cam: RtspSource(cam.rtsp_url, cfg.pipeline.target_fps, should_stop=stop.is_set),
+            detector_factory=lambda cam: PlateDetector(
+                cfg.detector.weights, cfg.detector.imgsz, cfg.detector.conf, tracker_yaml=cfg.detector.tracker_yaml),
+            executor_factory=executor_factory,
+            client=ApiClient(cfg.api.base_url, cfg.api.timeout_s),
+            outbox=outbox,
+        )
+        log.info("Coletor iniciado (%d câmera(s))", len(cfg.cameras))
+        app.start()
         stop.wait()
     finally:
         log.info("Encerrando…")
-        app.stop()
-        outbox.close()
+        stop.set()
+        try:
+            if app is not None:
+                app.stop()
+        finally:
+            outbox.close()
     return 0
 
 

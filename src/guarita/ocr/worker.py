@@ -29,6 +29,14 @@ def init_worker(engine_factory) -> None:
     _engine = engine_factory()
 
 
+def warmup() -> bool:
+    """Tarefa trivial que força o pool a subir os processos e a terminar o `init_worker`
+    (spawn + imports + carga dos modelos). Falha se o motor não foi inicializado."""
+    if _engine is None:
+        raise RuntimeError("motor de OCR não inicializado no trabalhador")
+    return True
+
+
 def process_job(job: OcrJob) -> OcrResult:
     start = time.perf_counter()
     candidates: list[tuple[str, float]] = []

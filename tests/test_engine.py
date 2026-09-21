@@ -57,3 +57,22 @@ def test_process_job_reads_every_crop_at_every_angle():
     assert len(engine.inputs) == 4
     assert result.candidates == [("ABC1234", 0.9), ("ABC1234", 0.8), ("ABC1235", 0.7)]
     assert result.elapsed_ms >= 0
+
+
+def test_paddle_engine_swallows_unexpected_output_formats():
+    from guarita.ocr.engine import PaddleEngine
+    engine = PaddleEngine.__new__(PaddleEngine)             # sem importar o paddleocr
+    engine._ocr = type("O", (), {"ocr": lambda self, img, cls=False: [[("formato", "inesperado")]]})()
+    assert engine.read(np.zeros((10, 30, 3), np.uint8)) == (None, None)
+
+
+def test_warmup_requires_an_initialised_engine():
+    import pytest
+    worker.init_worker(lambda: None)
+    with pytest.raises(RuntimeError):
+        worker.warmup()
+    worker.init_worker(lambda: FakeEngine())
+    try:
+        assert worker.warmup() is True
+    finally:
+        worker.init_worker(lambda: None)

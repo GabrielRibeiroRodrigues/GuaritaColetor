@@ -94,3 +94,17 @@ def test_crops_are_copies_of_the_frame():
     frame[:] = 0
     crop = tm.flush(0.1)[0].crops[0].image
     assert crop.mean() > 0
+
+
+def test_update_and_flush_are_serialised_by_a_lock():
+    import threading
+    tm = manager()
+    tm.update(frame_with(), [det()], 0.0)
+    with tm._lock:                      # simula update em andamento na thread da câmera
+        result = []
+        t = threading.Thread(target=lambda: result.append(tm.flush(1.0)))
+        t.start()
+        t.join(0.2)
+        assert t.is_alive()             # flush espera o lock
+    t.join(2)
+    assert len(result[0]) == 1

@@ -22,6 +22,52 @@ def wait_for(predicate, timeout=10.0):
     return False
 
 
+def make_app(tmp_path, api, frames=(), detections=()):
+    cfg = Config(
+        api=ApiConfig(base_url=api.base_url), detector=DetectorConfig(),
+        pipeline=PipelineConfig(failures_dir=str(tmp_path / "falhas")),
+        outbox=OutboxConfig(path=str(tmp_path / "o.sqlite")),
+        cameras=(CameraConfig("cam-01", "entrada", "", "KEY"),),
+    )
+    outbox = Outbox(cfg.outbox.path)
+
+    def executor_factory():
+        return ThreadPoolExecutor(max_workers=1, initializer=worker.init_worker, initargs=(lambda: FakeEngine(),))
+
+    app = App(cfg, source_factory=lambda cam: ScriptedSource(list(frames)),
+              detector_factory=lambda cam: ScriptedDetector(list(detections)),
+              executor_factory=executor_factory, client=ApiClient(api.base_url), outbox=outbox)
+    return app, outbox
+
+
+def test_start_waits_for_the_ocr_warmup_before_opening_cameras(tmp_path, api):
+    app, outbox = make_app(tmp_path, api)
+    order = []
+    app.dispatcher.wait_ready = lambda timeout: order.append(("warm", timeout)) or True
+    app._camera_loop = lambda camera_id: order.append("camera")
+    try:
+        app.start()
+        app.stop()
+    finally:
+        outbox.close()
+    assert order[0] == ("warm", 120.0)
+
+
+def test_stop_always_shuts_the_dispatcher_down_even_when_steps_fail(tmp_path, api):
+    app, outbox = make_app(tmp_path, api)
+    calls = []
+    real_shutdown = app.dispatcher.shutdown
+    app.dispatcher.shutdown = lambda: calls.append("shutdown") or real_shutdown()
+    app._runners["cam-01"].finish = lambda: (_ for _ in ()).throw(RuntimeError("boom"))
+    app._drain = lambda: (_ for _ in ()).throw(RuntimeError("drain"))
+    app.dispatcher.pending_count = lambda: 1
+    try:
+        app.stop()                       # não pode levantar
+    finally:
+        outbox.close()
+    assert calls == ["shutdown"]
+
+
 def test_frames_become_a_delivered_reading_and_heartbeats_flow(tmp_path, api):
     cfg = Config(
         api=ApiConfig(base_url=api.base_url),

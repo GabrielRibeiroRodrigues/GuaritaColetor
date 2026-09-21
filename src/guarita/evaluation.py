@@ -65,7 +65,8 @@ def read_rows(path: str):
 
 def run_offline(cfg: Config, camera: CameraConfig, source, detector, executor_factory):
     """Roda o fluxo completo sobre uma fonte finita (arquivo de vídeo). Devolve (linhas, quadros)."""
-    dispatcher = OcrDispatcher(executor_factory, cfg.pipeline.ocr_timeout_s)
+    dispatcher = OcrDispatcher(executor_factory, cfg.pipeline.ocr_timeout_s, workers=cfg.pipeline.ocr_workers)
+    dispatcher.wait_ready()
     aggregators = {camera.id: Aggregator(camera, cfg.pipeline, None)}
     sink = ListSink()
     runner = CameraRunner(camera, cfg.pipeline, source, detector, dispatcher)

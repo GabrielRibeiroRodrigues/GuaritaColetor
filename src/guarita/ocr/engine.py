@@ -46,12 +46,12 @@ class PaddleEngine:
     def read(self, img_rgb: np.ndarray):
         try:
             results = self._ocr.ocr(img_rgb, cls=False)
-        except Exception:
+            if not results or not results[0]:
+                return None, None
+            return read_plate_from_detections(results[0])
+        except Exception:  # noqa: BLE001 - como o legado: um ângulo ruim não custa o veículo inteiro
             log.exception("Erro durante o OCR")
             return None, None
-        if not results or not results[0]:
-            return None, None
-        return read_plate_from_detections(results[0])
 
 
 def make_paddle_engine() -> PaddleEngine:

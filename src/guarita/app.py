@@ -21,7 +21,7 @@ class App:
         self._client = client
         self._outbox = outbox
         self.stop_event = threading.Event()
-        self.dispatcher = OcrDispatcher(executor_factory, cfg.pipeline.ocr_timeout_s)
+        self.dispatcher = OcrDispatcher(executor_factory, cfg.pipeline.ocr_timeout_s, workers=cfg.pipeline.ocr_workers)
         self._failures = FailureStore(cfg.pipeline.failures_dir, cfg.pipeline.failures_ttl_h)
         self.health = {c.id: Health() for c in cfg.cameras}
         self._aggregators = {c.id: Aggregator(c, cfg.pipeline, self._failures) for c in cfg.cameras}
@@ -35,7 +35,9 @@ class App:
         self._results_thread: threading.Thread | None = None
         self._other_threads: list[threading.Thread] = []
 
-    def start(self) -> None:
+    def start(self, warmup_timeout_s: float = 120.0) -> None:
+        # Aquece o pool de OCR (spawn + carga do PaddleOCR) antes de abrir as câmeras.
+        self.dispatcher.wait_ready(warmup_timeout_s)
         for camera in self.cfg.cameras:
             thread = threading.Thread(target=self._camera_loop, args=(camera.id,), name=f"camera-{camera.id}", daemon=True)
             thread.start()
@@ -49,20 +51,31 @@ class App:
 
     def stop(self) -> None:
         self.stop_event.set()
-        for thread in self._camera_threads:
-            thread.join(timeout=10)
-        for runner in self._runners.values():
-            runner.finish()
-        if self._results_thread:
-            self._results_thread.join(timeout=10)
-        deadline = time.monotonic() + self.cfg.pipeline.ocr_timeout_s + 5
-        while self.dispatcher.pending_count() and time.monotonic() < deadline:
+        try:
+            for thread in self._camera_threads:
+                thread.join(timeout=10)
+                if thread.is_alive():
+                    log.error("Thread %s não parou em 10 s; encerrando mesmo assim (TrackManager tem lock)", thread.name)
+            for runner in self._runners.values():
+                try:
+                    runner.finish()
+                except Exception:  # noqa: BLE001
+                    log.exception("Erro ao fechar as trilhas na parada")
+            if self._results_thread:
+                self._results_thread.join(timeout=10)
+            deadline = time.monotonic() + self.cfg.pipeline.ocr_timeout_s + 5
+            while self.dispatcher.pending_count() and time.monotonic() < deadline:
+                self._drain()
+                time.sleep(0.1)
             self._drain()
-            time.sleep(0.1)
-        self._drain()
-        for thread in self._other_threads:
-            thread.join(timeout=10)
-        self.dispatcher.shutdown()
+        except Exception:  # noqa: BLE001
+            log.exception("Erro durante o encerramento")
+        finally:
+            try:
+                for thread in self._other_threads:
+                    thread.join(timeout=10)
+            finally:
+                self.dispatcher.shutdown()
 
     def _drain(self) -> None:
         for reading in drain_results(self.dispatcher, self._aggregators, self._outbox):
@@ -90,9 +103,9 @@ class App:
             try:
                 self._drain()
                 if time.monotonic() - last_housekeeping > 3600:
+                    last_housekeeping = time.monotonic()  # antes das purgas: uma falha não reexecuta a cada 0,2 s
                     self._outbox.purge_delivered(self.cfg.outbox.delivered_ttl_h * 3600)
                     self._failures.purge()
-                    last_housekeeping = time.monotonic()
             except Exception:
                 log.exception("Erro ao processar resultados do OCR")
             self.stop_event.wait(0.2)
