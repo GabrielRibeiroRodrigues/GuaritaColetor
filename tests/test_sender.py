@@ -1,11 +1,13 @@
 import json
+from dataclasses import replace
+import threading
 import time
 
 import pytest
 
 from fakes import make_reading
 from guarita.outbox import Outbox
-from guarita.sender import ApiClient, deliver_next
+from guarita.sender import ApiClient, deliver_next, run_sender
 
 KEYS = {"cam-01": "KEY"}
 
@@ -117,3 +119,32 @@ def test_heartbeat(api):
     api.responses = [401]
     assert client.heartbeat("KEY") is False
     assert ApiClient("http://127.0.0.1:9/api", timeout_s=1).heartbeat("KEY") is False
+
+
+def test_epoch_zero_timestamp_is_delivered(box, api):
+    box.add(replace(make_reading(1), timestamp=0.0))
+    assert deliver(box, ApiClient(api.base_url)).outcome == "delivered"
+
+
+def test_sender_thread_survives_unexpected_errors(box):
+    box.add(make_reading(1))
+    calls = []
+
+    class Flaky:
+        def post_reading(self, api_key, row):
+            calls.append(row.id)
+            if len(calls) == 1:
+                raise RuntimeError("boom")
+            return 201, "ok"
+
+    stop = threading.Event()
+    thread = threading.Thread(
+        target=run_sender, args=(box, Flaky(), KEYS, stop), kwargs={"idle_s": 0.05}, daemon=True)
+    thread.start()
+    deadline = time.time() + 5
+    while time.time() < deadline and box.counts()["delivered"] < 1:
+        time.sleep(0.05)
+    stop.set()
+    thread.join(timeout=5)
+    assert box.counts()["delivered"] == 1
+    assert len(calls) >= 2

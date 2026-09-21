@@ -3,7 +3,7 @@ from __future__ import annotations
 import logging
 import threading
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timezone
 
 import requests
 
@@ -19,7 +19,7 @@ class Delivery:
 
 
 def _iso(ts: float) -> str:
-    return datetime.fromtimestamp(ts).astimezone().isoformat(timespec="milliseconds")
+    return datetime.fromtimestamp(ts, tz=timezone.utc).isoformat(timespec="milliseconds")
 
 
 class ApiClient:
@@ -93,7 +93,11 @@ def deliver_next(outbox: Outbox, client: ApiClient, api_keys: dict[str, str], no
 def run_sender(outbox: Outbox, client: ApiClient, api_keys: dict[str, str], stop: threading.Event,
                idle_s: float = 1.0, auth_pause_s: float = 30.0) -> None:
     while not stop.is_set():
-        result = deliver_next(outbox, client, api_keys)
-        if result.outcome == "delivered":
-            continue
-        stop.wait(auth_pause_s if result.outcome == "auth" else idle_s)
+        try:
+            result = deliver_next(outbox, client, api_keys)
+            if result.outcome == "delivered":
+                continue
+            stop.wait(auth_pause_s if result.outcome == "auth" else idle_s)
+        except Exception:  # noqa: BLE001 - a thread de envio nunca pode morrer
+            log.exception("Erro inesperado no envio")
+            stop.wait(idle_s)
