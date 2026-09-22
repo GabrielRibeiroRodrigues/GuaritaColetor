@@ -16,7 +16,7 @@ from .detect import PlateDetector
 from .ocr.engine import make_paddle_engine
 from .ocr.worker import init_worker
 from .outbox import Outbox
-from .preview import FrameStore, PreviewServer
+from .preview import FrameStore, PreviewServer, ReadingLog, Recorder
 from .sender import ApiClient
 
 
@@ -56,11 +56,21 @@ def main(argv=None) -> int:
     mp_context = multiprocessing.get_context("spawn")
 
     # Página local de vídeo ao vivo, para validar o coletor em teste presencial sem depender de
-    # internet — desligada por padrão (custo zero) e ligada só com GUARITA_PREVIEW=1.
+    # internet — desligada por padrão (custo zero) e ligada só com GUARITA_PREVIEW=1. A gravação
+    # (botão na página) é sempre sob demanda, mesmo com o preview ligado — nunca contínua.
     preview_enabled = os.environ.get("GUARITA_PREVIEW") == "1"
     frame_store = FrameStore() if preview_enabled else None
-    on_frame = frame_store.update if frame_store else None
+    reading_log = ReadingLog() if preview_enabled else None
+    recordings_dir = os.path.join(os.path.dirname(cfg.outbox.path) or ".", "recordings")
+    recorder = Recorder(recordings_dir, fps=cfg.pipeline.target_fps) if preview_enabled else None
+    on_reading = reading_log.add if reading_log else None
     preview_server = None
+
+    on_frame = None
+    if preview_enabled:
+        def on_frame(camera_id, frame, detections):
+            frame_store.update(camera_id, frame, detections)
+            recorder.write(camera_id, frame)  # write() é um no-op se ninguém apertou "Gravar"
 
     def executor_factory():
         return ProcessPoolExecutor(
@@ -79,12 +89,14 @@ def main(argv=None) -> int:
             outbox=outbox,
             stop_event=stop,
             on_frame=on_frame,
+            on_reading=on_reading,
         )
         log.info("Coletor iniciado (%d câmera(s))", len(cfg.cameras))
         app.start()
         if preview_enabled:
             preview_server = PreviewServer(frame_store, [c.id for c in cfg.cameras],
-                                            port=int(os.environ.get("GUARITA_PREVIEW_PORT", "8888")))
+                                            port=int(os.environ.get("GUARITA_PREVIEW_PORT", "8888")),
+                                            reading_log=reading_log, recorder=recorder)
             preview_server.start()
         stop.wait()
     except (RuntimeError, FileNotFoundError) as exc:
