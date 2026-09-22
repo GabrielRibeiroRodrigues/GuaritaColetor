@@ -101,13 +101,14 @@ class CameraRunner:
     """Um passo do fluxo por câmera: quadro -> detecção/rastreio -> trilhas fechadas -> OCR."""
 
     def __init__(self, camera: CameraConfig, cfg: PipelineConfig, source, detector, dispatcher: OcrDispatcher,
-                 health: Health | None = None):
+                 health: Health | None = None, on_frame=None):
         self.camera = camera
         self._cfg = cfg
         self.source = source
         self._detector = detector
         self._dispatcher = dispatcher
         self._health = health
+        self._on_frame = on_frame
         self._tracks = TrackManager(camera.id, cfg.close_after_s, cfg.max_age_s, cfg.max_crops)
         self._last_ts = 0.0
 
@@ -119,6 +120,8 @@ class CameraRunner:
             self._health.touch()
             self._health.count("frames")
         detections = self._detector.detect(frame.image)
+        if self._on_frame:
+            self._on_frame(self.camera.id, frame.image, detections)
         self._last_ts = frame.ts
         if self._health and detections:
             self._health.count("detections", len(detections))

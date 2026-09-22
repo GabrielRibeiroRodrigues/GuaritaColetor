@@ -84,6 +84,27 @@ def _dispatcher(engine):
     return OcrDispatcher(factory, timeout_s=10.0)
 
 
+def test_on_frame_hook_is_called_with_the_frame_and_detections():
+    calls = []
+    frame_img = np.zeros((10, 10, 3), np.uint8)
+    dets = [Detection(1, (0, 0, 5, 5), 0.9)]
+    runner = CameraRunner(
+        CAMERA, PipelineConfig(), ScriptedSource([Frame(frame_img, 0.0)]), ScriptedDetector([dets]),
+        _dispatcher(FakeEngine()), on_frame=lambda cid, img, d: calls.append((cid, img, d)))
+    assert runner.step() == "frame"
+    assert len(calls) == 1
+    camera_id, img, detections = calls[0]
+    assert camera_id == "cam-01"
+    assert img is frame_img
+    assert detections == dets
+
+
+def test_on_frame_hook_is_not_required():
+    # nenhum on_frame passado: comportamento igual ao de antes, sem lançar
+    runner = CameraRunner(CAMERA, PipelineConfig(), ScriptedSource([]), ScriptedDetector([]), _dispatcher(FakeEngine()))
+    assert runner.step() == "done"
+
+
 def test_end_to_end_reading_lands_in_the_sink():
     cfg = PipelineConfig(max_crops=2, close_after_s=1.5)
     blank = np.zeros((100, 200, 3), np.uint8)
