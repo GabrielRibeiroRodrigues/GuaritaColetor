@@ -86,6 +86,28 @@ outro arquivo use `detector.tracker_yaml`. Ao mudar `conf`, mude o YAML junto.
 
 Na partida o coletor aquece o pool de OCR (carga do PaddleOCR) antes de abrir as câmeras, aguardando até 120 s.
 
+## Preview web (teste presencial, sem internet)
+
+Página local para validar visualmente o coletor na guarita, sem depender de internet — desligada
+por padrão (custo zero) e ligada só quando você precisa:
+
+```powershell
+$env:GUARITA_PREVIEW = "1"          # GUARITA_PREVIEW_PORT muda a porta (padrão 8888)
+.venv-run\Scripts\python -m guarita --config config.toml
+```
+
+Abra `http://localhost:8888/` (ou pelo IP da máquina, de outro aparelho na mesma rede) e clique na
+câmera. A página mostra:
+
+- **Vídeo ao vivo** com a caixa verde de cada detecção, atualizado a cada 500 ms.
+- **Últimas leituras** daquela câmera (placa + horário), as 10 mais recentes.
+- **Botão de gravar** — grava vídeo (`.mp4`) só enquanto ligado por você, nunca contínuo; para
+  sozinho depois de 30 min, para o caso de esquecer ligado. Os arquivos ficam em
+  `data/recordings/<câmera>/` (não são apagados sozinhos — apague manualmente quando terminar).
+
+Sem senha — quem estiver na rede local durante o teste consegue ver. Especificação completa:
+`docs/superpowers/specs/2026-09-22-preview-web-design.md`.
+
 ## Medir antes de trocar (critério de aceite)
 
 ```powershell

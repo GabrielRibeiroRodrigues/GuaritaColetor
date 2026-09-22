@@ -1,6 +1,11 @@
 # Preview web do coletor (design)
 
-Data: 2026-09-22 · Status: aprovado, implementação em andamento
+Data: 2026-09-22 · Status: implementado (base + extensão de 2026-09-22)
+
+> **Adendo (mesmo dia):** a base (só vídeo ao vivo) foi aprovada, implementada e verificada
+> primeiro. Depois disso, o usuário pediu duas extensões que a seção "Fora do escopo" original
+> excluía: lista de últimas leituras e gravação de vídeo sob demanda. Ambas foram desenhadas e
+> aprovadas à parte (caminho limitado, sem novo documento de spec) e estão descritas na seção 8.
 
 ## 1. Contexto e objetivo
 
@@ -14,8 +19,8 @@ cada câmera com a caixa da detecção desenhada — o suficiente para confirmar
 detecção está funcionando, mesmo sem internet. Fica desligada por padrão e liga por variável de
 ambiente, para não gastar hardware fora dos testes.
 
-**Fora do escopo:** histórico de leituras na tela, autenticação, HTTPS, gravação de vídeo,
-qualidade/resolução configurável, qualquer coisa além de "ver a câmera enxergando a placa agora".
+**Fora do escopo (da versão base; ver seção 8 para o que foi adicionado depois):** autenticação,
+HTTPS, qualidade/resolução configurável.
 
 ## 2. Decisões tomadas
 
@@ -141,3 +146,45 @@ falta depois de usar em campo, é uma extensão pequena e isolada (ler a leitura
   de uso — é para teste presencial).
 - **Sem autenticação:** aceito conscientemente (seção 2) porque a página só fica no ar durante
   testes supervisionados, nunca em operação normal.
+
+## 8. Extensão (mesmo dia): últimas leituras e gravação sob demanda
+
+### Últimas leituras
+
+- `ReadingLog`: mesmo espírito da `FrameStore` (em memória, por câmera), mas guarda as últimas 10
+  leituras finalizadas (`Reading`), mais nova primeiro. **Não é a fila de envio** (`Outbox`): a fila
+  é sobre confiabilidade de entrega à API (linhas somem quando entregues ou falham de vez); o
+  `ReadingLog` é só "o que apareceu na tela", independe de a API estar no ar.
+- Alimentado por um gancho novo em `App`, `on_reading`, chamado assim que uma leitura sai do
+  `drain_results` — mesmo princípio do `on_frame`: opcional, `None` por padrão, `CameraRunner`/`App`
+  não sabem nada do preview.
+- Na página: `GET /preview/<id>/readings.json` (`[{"plate", "timestamp"}]`), lido por JS a cada 2 s
+  e mostrado numa lista abaixo do vídeo.
+
+### Gravação sob demanda
+
+- `Recorder`: grava vídeo (`cv2.VideoWriter`, `mp4v`) só enquanto explicitamente ligado por um botão
+  na página — nunca junto do preview como um todo, nem por detecção. `start(id)` / `stop(id)` /
+  `write(id, frame)` (no-op se não estiver gravando); o arquivo (`data/recordings/<id>/<hora>.mp4`)
+  só é aberto no primeiro `write()` depois do `start()`, para já saber o tamanho do quadro.
+  Alimentado pelo mesmo quadro que atualiza a `FrameStore` — grava na taxa real da câmera, não na
+  taxa de quem está olhando a página.
+- **Trava de segurança:** para sozinho depois de 30 min (`max_duration_s`), mesmo sem ninguém
+  clicar em parar — evita encher o disco se alguém esquecer ligado.
+- **Sem limpeza automática dos arquivos** (decisão explícita): ao contrário das imagens do
+  dashboard (30 dias) e diferente do que se poderia esperar por simetria, os vídeos gravados aqui
+  ficam até alguém apagar à mão — são poucos, de testes pontuais. Revisar se isso virar hábito
+  comum e os arquivos começarem a acumular.
+- Rotas novas: `GET /preview/<id>/record/status` (`{"recording", "seconds"}`),
+  `POST /preview/<id>/record/start`, `POST /preview/<id>/record/stop`. Botão na página chama
+  `record/status` para saber o estado atual e decide `start` ou `stop` a cada clique.
+
+### Testes e verificação
+
+Mesmo padrão da base: `ReadingLog` e `Recorder` testados isolados (com `tmp_path` para os arquivos
+de vídeo, inclusive lendo o `.mp4` gravado de volta com `cv2.VideoCapture` para conferir a contagem
+de quadros); rotas novas do `PreviewServer` com um teste HTTP real; `on_reading` testado de ponta a
+ponta no `App` (quadros → OCR real com falso → leitura entregue → gancho chamado). Verificação
+manual: YOLO real detectando, `ReadingLog`/`Recorder` reais, HTTP real — página com o botão e a
+lista, `record/start` → alguns quadros → `record/stop`, e o `.mp4` resultante reaberto com
+`cv2.VideoCapture` para conferir a contagem de quadros e as dimensões.
