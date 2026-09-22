@@ -16,10 +16,12 @@ log = logging.getLogger(__name__)
 
 class App:
     def __init__(self, cfg: Config, *, source_factory, detector_factory, executor_factory,
-                 client: ApiClient, outbox: Outbox, stop_event: threading.Event | None = None, on_frame=None):
+                 client: ApiClient, outbox: Outbox, stop_event: threading.Event | None = None, on_frame=None,
+                 on_reading=None):
         self.cfg = cfg
         self._client = client
         self._outbox = outbox
+        self._on_reading = on_reading
         self.stop_event = threading.Event() if stop_event is None else stop_event
         self._camera_threads: list[threading.Thread] = []
         self._results_thread: threading.Thread | None = None
@@ -95,6 +97,8 @@ class App:
     def _drain(self) -> None:
         for reading in drain_results(self.dispatcher, self._aggregators, self._outbox):
             self.health[reading.camera_id].count("readings")
+            if self._on_reading:
+                self._on_reading(reading)
 
     def _camera_loop(self, camera_id: str) -> None:
         runner = self._runners[camera_id]

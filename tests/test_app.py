@@ -220,3 +220,37 @@ def test_frames_become_a_delivered_reading_and_heartbeats_flow(tmp_path, api):
     assert readings[0]["headers"]["x-api-key"] == "KEY"
     assert b"ABC1234" in readings[0]["body"]
     assert app.health["cam-01"].snapshot()["frames"] == 4
+
+
+def test_on_reading_hook_is_called_with_each_finalized_reading(tmp_path, api):
+    calls = []
+    cfg = Config(
+        api=ApiConfig(base_url=api.base_url),
+        detector=DetectorConfig(),
+        pipeline=PipelineConfig(max_crops=2, close_after_s=1.5, failures_dir=str(tmp_path / "falhas")),
+        outbox=OutboxConfig(path=str(tmp_path / "o.sqlite")),
+        cameras=(CameraConfig("cam-01", "entrada", "", "KEY"),),
+    )
+    blank = np.zeros((100, 200, 3), np.uint8)
+    frames = [Frame(blank, t) for t in (0.0, 0.5, 1.0, 2.5)]
+    box = (10, 10, 60, 40)
+    detections = [[Detection(1, box, 0.9)], [Detection(1, box, 0.9)], [], []]
+    engine = FakeEngine([("ABC1234", 0.9), ("ABC1234", 0.8), ("ABC1234", 0.85), (None, None)])
+    outbox = Outbox(cfg.outbox.path)
+
+    def executor_factory():
+        return ThreadPoolExecutor(max_workers=1, initializer=worker.init_worker, initargs=(lambda: engine,))
+
+    app = App(cfg, source_factory=lambda cam: ScriptedSource(frames),
+              detector_factory=lambda cam: ScriptedDetector(detections),
+              executor_factory=executor_factory, client=ApiClient(api.base_url), outbox=outbox,
+              on_reading=lambda reading: calls.append(reading))
+    app.start()
+    try:
+        assert wait_for(lambda: len(calls) == 1)
+    finally:
+        app.stop()
+        outbox.close()
+
+    assert calls[0].plate == "ABC1234"
+    assert calls[0].camera_id == "cam-01"
