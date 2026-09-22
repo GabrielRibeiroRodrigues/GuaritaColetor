@@ -39,6 +39,12 @@ class PaddleEngine:
     """PaddleOCR com os mesmos parâmetros do leitor atual."""
 
     def __init__(self):
+        # No Windows, se o paddleocr (via albumentations) importar o torch pela primeira vez depois
+        # do paddle já estar carregado, o torch falha ao abrir `torch\\lib\\shm.dll` (WinError 127 —
+        # conflito de DLL nativa). Importar o torch aqui, antes do paddleocr, evita o problema — vale
+        # tanto no processo principal quanto no processo do pool de OCR, onde este é o primeiro import
+        # pesado. Sem relação com o nosso código: é só para garantir a ordem de carregamento das DLLs.
+        import torch  # noqa: F401
         from paddleocr import PaddleOCR
 
         self._ocr = PaddleOCR(lang="pt", use_angle_cls=False, use_gpu=False, det_limit_side_len=640)

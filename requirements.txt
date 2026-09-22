@@ -1,3 +1,6 @@
+# setuptools<81: ultralytics==8.0.114 (2023) ainda importa `pkg_resources`, que o setuptools removeu
+# (obrigatório aqui; sem o pin, um `pip install` recente derruba o carregamento do YOLO).
+setuptools<81
 ultralytics==8.0.114
 torch==2.5.1
 torchvision==0.20.1

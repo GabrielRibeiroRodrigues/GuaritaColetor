@@ -22,6 +22,54 @@ python -m venv .venv-run
 .venv-run\Scripts\python tools\check_env.py caminho\para\bestn.pt
 ```
 Se o `pip` não resolver as versões juntas (torch/paddle/numpy), ajuste os pins de `requirements.txt` até o `check_env.py` passar.
+`requirements.lock.txt` (`pip freeze` completo) registra a combinação exata já verificada — use-o para reproduzir o
+ambiente ao pé da letra (`pip install -r requirements.lock.txt`) quando `requirements.txt` sozinho não bastar.
+
+### Ambiente verificado (2026-09-21, máquina de desenvolvimento Windows 11, Python 3.12)
+
+`ultralytics==8.0.114` + `torch==2.5.1` (CPU) + `paddlepaddle==3.1.0` + `paddleocr==2.10.0` funcionam juntos, com dois
+cuidados que não são óbvios:
+
+- **`setuptools<81` é obrigatório.** O `ultralytics==8.0.114` (2023) ainda importa `pkg_resources`, que versões recentes
+  do `setuptools` (a partir de ~81) removeram. Sem o pin, `pip install -r requirements.txt` traz um `setuptools` novo
+  e o YOLO não carrega (`ModuleNotFoundError: No module named 'pkg_resources'`). Já fixado em `requirements.txt`.
+- **Ordem de import no Windows: `torch` antes do `paddleocr`.** Se algo importar `paddleocr` (que carrega `paddle`)
+  antes de `torch` ter sido importado no processo, o `torch` falha ao carregar depois
+  (`OSError: [WinError 127] ... torch\lib\shm.dll`) — conflito de DLL nativa entre as duas pilhas. Isso acontece de
+  verdade no processo do pool de OCR, que só constrói o `PaddleEngine`. Corrigido em `src/guarita/ocr/engine.py`
+  (`PaddleEngine.__init__` importa `torch` antes do `paddleocr`, só por causa da ordem de carregamento das DLLs — o
+  código em si não usa torch).
+
+Verificado de ponta a ponta com `tools/check_env.py` e `tools/smoke_real.py` (todos os subcomandos, com modelos e
+PaddleOCR reais — não fakes): detector YOLO carregando pesos e rodando o rastreio ByteTrack (ids estáveis em 30
+quadros); PaddleOCR real lendo 4 variantes de placa sintética (nítida, Mercosul, com ruído, desfocada) nos dois
+ângulos, confiança > 0.99 nos casos limpos; pool de processos real (`ProcessPoolExecutor`, spawn do Windows) aquecendo
+em ~5 s e entregando o primeiro job sem estourar por partida fria (confirma a correção do C1 da revisão); simulação de
+travamento recuperada corretamente; fluxo completo (captura simulada → rastreio real → OCR real em processo separado
+→ fila SQLite real) produzindo a leitura esperada.
+
+```powershell
+.venv-run\Scripts\python tools\smoke_real.py detect caminho\para\bestn.pt
+.venv-run\Scripts\python tools\smoke_real.py ocr
+.venv-run\Scripts\python tools\smoke_real.py pool
+.venv-run\Scripts\python tools\smoke_real.py e2e
+```
+
+### Medições iniciais (máquina de desenvolvimento — **não** é o hardware da guarita)
+
+i5 12ª geração / 32 núcleos lógicos neste PC de desenvolvimento (a guarita usa um i5 de 12ª geração com 16 GB de RAM,
+sem GPU dedicada — números vão variar; meça de novo lá com `tools/bench.py` e o `bestn.pt` real):
+
+| Medida | Valor |
+|---|---|
+| Detector (YOLO genérico, conf 0.25, imgsz 416, quadro 3840×2160) | ~72–89 ms/quadro |
+| Inicialização do PaddleOCR (processo principal) | ~3,4 s |
+| Aquecimento do pool (spawn do Windows + PaddleOCR), 1 worker | ~5 s |
+| OCR por recorte por ângulo (depois de aquecido) | ~60–84 ms |
+| Memória com detector + OCR no mesmo processo | ~767 MB |
+
+Com 2 recortes × 2 ângulos por veículo (padrão), o custo de OCR por veículo fica em torno de 250–350 ms de CPU,
+paralelizável entre os `pipeline.ocr_workers` processos do pool.
 
 ## Configuração e execução
 
