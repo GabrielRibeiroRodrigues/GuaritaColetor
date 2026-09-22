@@ -138,11 +138,32 @@ def test_wait_ready_waits_for_warmup_then_gives_up():
     assert dispatcher.wait_ready(timeout_s=3, poll_s=1) is True
 
 
-def test_failed_warmup_restarts_the_pool():
-    dispatcher, executors, _ = make(auto_warm=False)
+def test_failed_warmup_restarts_the_pool_after_a_growing_backoff():
+    dispatcher, executors, clock = make(auto_warm=False)
     executors[0].warmups[0].set_exception(BrokenProcessPool("init falhou"))
     dispatcher.poll()
-    assert len(executors) == 2 and executors[0].shut_down
+    assert len(executors) == 1 and executors[0].shut_down    # falhou: espera antes de tentar de novo
+    dispatcher.poll()
+    assert len(executors) == 1                               # ainda dentro da espera (5 s)
+    clock[0] = 5.0
+    dispatcher.poll()
+    assert len(executors) == 2                                # espera passou: pool novo
+    assert not dispatcher.failed
+
+
+def test_warmup_gives_up_after_max_consecutive_failures():
+    dispatcher, executors, clock = make(auto_warm=False)
+    for _ in range(5):
+        executors[-1].warmups[0].set_exception(BrokenProcessPool("init falhou"))
+        dispatcher.poll()
+        clock[0] += 1000.0  # bem além de qualquer espera crescente (teto de 300 s)
+        dispatcher.poll()   # dispara o próximo reinício (ou a desistência, na 5ª vez)
+    assert dispatcher.failed
+    assert "5 vezes" in dispatcher.failure_reason
+    before = len(executors)
+    clock[0] += 1000.0
+    dispatcher.poll()
+    assert len(executors) == before                           # desistiu: não cria mais pools
 
 
 def test_restart_kills_the_old_worker_processes():

@@ -8,7 +8,7 @@ from datetime import datetime, timezone
 
 import requests
 
-from .outbox import Outbox, OutboxRow
+from .outbox import MAX_UNEXPECTED_ERRORS, Outbox, OutboxRow
 
 log = logging.getLogger(__name__)
 
@@ -23,7 +23,6 @@ def _iso(ts: float) -> str:
     return datetime.fromtimestamp(ts, tz=timezone.utc).isoformat(timespec="milliseconds")
 
 
-MAX_UNEXPECTED_ATTEMPTS = 10
 AUTH_LOG_INTERVAL_S = 600.0
 _auth_logged: dict[str, float] = {}
 
@@ -88,12 +87,12 @@ def deliver_next(outbox: Outbox, client: ApiClient, api_keys: dict[str, str], no
         outbox.mark_retry(row.id, f"rede: {exc}", now)
         return Delivery("retry", str(exc))
     except Exception as exc:  # noqa: BLE001 - linha envenenada não pode travar a cabeça da fila
-        if row.attempts + 1 >= MAX_UNEXPECTED_ATTEMPTS:
-            outbox.mark_failed(row.id, f"erro inesperado: {exc!r}")
+        # Contado à parte de `attempts` (que é só de rede): uma linha que já esperou muitas vezes
+        # pela rede não pode ser descartada no primeiro bug de serialização, e vice-versa.
+        if outbox.mark_unexpected(row.id, f"inesperado: {exc!r}", now):
             log.error("Leitura %s descartada após %d erros inesperados: %r",
-                      row.external_id, MAX_UNEXPECTED_ATTEMPTS, exc)
+                      row.external_id, MAX_UNEXPECTED_ERRORS, exc)
             return Delivery("failed", f"inesperado: {exc!r}")
-        outbox.mark_retry(row.id, f"inesperado: {exc!r}", now)
         log.warning("Erro inesperado ao enviar %s: %r", row.external_id, exc)
         return Delivery("retry", f"inesperado: {exc!r}")
 

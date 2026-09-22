@@ -120,29 +120,24 @@ class Poison:
 
 
 def test_poison_row_backs_off_then_fails_and_others_are_delivered(box):
+    # OverflowError não é requests.RequestException: entra no ramo de erro inesperado, contado à
+    # parte de `attempts` (que é só de rede) em outbox.unexpected_errors — ver test_outbox.py para
+    # a espera crescente e o limite de tentativas de mark_unexpected em si.
     box.add(make_reading(1))
     box.add(make_reading(2))
     now = 1000.0
-    delays = []
-    waits = []
-    original = box.mark_retry
-
-    def spy(row_id, error, at=None):
-        waits.append(original(row_id, error, at))
-        return waits[-1]
-
-    box.mark_retry = spy
+    counts = []
     for _ in range(9):
         assert deliver_next(box, Poison(), KEYS, now=now).outcome == "retry"
         row = box.next_due(now=now + 1e6)
-        delays.append(row.attempts)
+        counts.append(row.unexpected_errors)
+        assert row.attempts == 0                                          # rede e erro inesperado não se misturam
 
         # a linha envenenada fica para depois; a seguinte é entregue
         if _ == 0:
             assert deliver_next(box, Poison(), KEYS, now=now).outcome == "delivered"
         now += 1e6
-    assert delays == list(range(1, 10))
-    assert waits[0] < waits[1] < waits[2]                                  # espera crescente
+    assert counts == list(range(1, 10))
     assert deliver_next(box, Poison(), KEYS, now=now).outcome == "failed"
     assert box.counts() == {"pending": 0, "delivered": 1, "failed": 1}
 

@@ -62,10 +62,16 @@ def main(argv=None) -> int:
             executor_factory=executor_factory,
             client=ApiClient(cfg.api.base_url, cfg.api.timeout_s),
             outbox=outbox,
+            stop_event=stop,
         )
         log.info("Coletor iniciado (%d câmera(s))", len(cfg.cameras))
         app.start()
         stop.wait()
+    except (RuntimeError, FileNotFoundError) as exc:
+        # Sem OCR ou sem pesos o coletor não tem função. Sai com 3 para que o gerenciador de serviço
+        # (NSSM) reinicie com atraso, em vez de girar em falso.
+        log.error("Partida abortada: %s", exc)
+        return 3
     finally:
         log.info("Encerrando…")
         stop.set()

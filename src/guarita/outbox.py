@@ -9,6 +9,9 @@ from .models import Reading
 
 BASE_BACKOFF_S = 1.0
 MAX_BACKOFF_S = 300.0
+# Erros inesperados (não-rede) são contados à parte de `attempts`, para que uma linha que já esperou
+# muitas vezes pela rede não seja descartada no primeiro bug de serialização.
+MAX_UNEXPECTED_ERRORS = 10
 
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS outbox (
@@ -23,6 +26,7 @@ CREATE TABLE IF NOT EXISTS outbox (
   image BLOB,
   status TEXT NOT NULL DEFAULT 'pending',
   attempts INTEGER NOT NULL DEFAULT 0,
+  unexpected_errors INTEGER NOT NULL DEFAULT 0,
   next_attempt_at REAL NOT NULL DEFAULT 0,
   last_error TEXT,
   created_at REAL NOT NULL,
@@ -45,6 +49,7 @@ class OutboxRow:
     processing_ms: int
     image: bytes | None
     attempts: int
+    unexpected_errors: int = 0
 
 
 class Outbox:
@@ -55,6 +60,13 @@ class Outbox:
         self._db.execute("PRAGMA journal_mode=WAL")
         self._db.execute("PRAGMA synchronous=NORMAL")
         self._db.executescript(_SCHEMA)
+        self._migrate()
+
+    def _migrate(self) -> None:
+        """`CREATE TABLE IF NOT EXISTS` não acrescenta colunas novas a um banco já criado."""
+        columns = {row[1] for row in self._db.execute("PRAGMA table_info(outbox)")}
+        if "unexpected_errors" not in columns:
+            self._db.execute("ALTER TABLE outbox ADD COLUMN unexpected_errors INTEGER NOT NULL DEFAULT 0")
 
     def add(self, reading: Reading, now: float | None = None) -> bool:
         now = time.time() if now is None else now
@@ -83,7 +95,8 @@ class Outbox:
         now = time.time() if now is None else now
         with self._lock:
             row = self._db.execute(
-                "SELECT id, external_id, camera_id, plate, direction, ts, confidence, processing_ms, image, attempts"
+                "SELECT id, external_id, camera_id, plate, direction, ts, confidence, processing_ms, image, attempts,"
+                " unexpected_errors"
                 " FROM outbox WHERE status='pending' AND next_attempt_at <= ? ORDER BY id LIMIT 1",
                 (now,)).fetchone()
         return OutboxRow(*row) if row else None
@@ -103,6 +116,26 @@ class Outbox:
                 "UPDATE outbox SET attempts=attempts+1, next_attempt_at=?, last_error=? WHERE id=?",
                 (now + delay, error[:300], row_id))
         return delay
+
+    def mark_unexpected(self, row_id: int, error: str, now: float | None = None) -> bool:
+        """Conta um erro **inesperado** (bug, não rede) sem tocar em `attempts` e reagenda com espera
+        crescente. Devolve True quando a linha esgotou MAX_UNEXPECTED_ERRORS e virou 'failed'."""
+        now = time.time() if now is None else now
+        with self._lock:
+            row = self._db.execute("SELECT unexpected_errors FROM outbox WHERE id=?", (row_id,)).fetchone()
+            if row is None:
+                return False
+            count = row[0] + 1
+            if count >= MAX_UNEXPECTED_ERRORS:
+                self._db.execute(
+                    "UPDATE outbox SET unexpected_errors=?, status='failed', last_error=? WHERE id=?",
+                    (count, error[:300], row_id))
+                return True
+            delay = min(MAX_BACKOFF_S, BASE_BACKOFF_S * 2 ** (count - 1))
+            self._db.execute(
+                "UPDATE outbox SET unexpected_errors=?, next_attempt_at=?, last_error=? WHERE id=?",
+                (count, now + delay, error[:300], row_id))
+            return False
 
     def mark_failed(self, row_id: int, error: str) -> None:
         with self._lock:

@@ -16,28 +16,43 @@ log = logging.getLogger(__name__)
 
 class App:
     def __init__(self, cfg: Config, *, source_factory, detector_factory, executor_factory,
-                 client: ApiClient, outbox: Outbox):
+                 client: ApiClient, outbox: Outbox, stop_event: threading.Event | None = None):
         self.cfg = cfg
         self._client = client
         self._outbox = outbox
-        self.stop_event = threading.Event()
-        self.dispatcher = OcrDispatcher(executor_factory, cfg.pipeline.ocr_timeout_s, workers=cfg.pipeline.ocr_workers)
-        self._failures = FailureStore(cfg.pipeline.failures_dir, cfg.pipeline.failures_ttl_h)
-        self.health = {c.id: Health() for c in cfg.cameras}
-        self._aggregators = {c.id: Aggregator(c, cfg.pipeline, self._failures) for c in cfg.cameras}
-        self._runners = {
-            c.id: CameraRunner(c, cfg.pipeline, source_factory(c), detector_factory(c), self.dispatcher,
-                               self.health[c.id])
-            for c in cfg.cameras
-        }
-        self._api_keys = {c.id: c.api_key for c in cfg.cameras}
+        self.stop_event = threading.Event() if stop_event is None else stop_event
         self._camera_threads: list[threading.Thread] = []
         self._results_thread: threading.Thread | None = None
         self._other_threads: list[threading.Thread] = []
+        # Detectores e fontes ANTES do pool de OCR: se os pesos faltarem (ou o RTSP não abrir), o erro
+        # sobe sem deixar processos de trabalho órfãos, porque o pool ainda não existe.
+        detectors = {c.id: detector_factory(c) for c in cfg.cameras}
+        sources = {c.id: source_factory(c) for c in cfg.cameras}
+        self.dispatcher = OcrDispatcher(executor_factory, cfg.pipeline.ocr_timeout_s, workers=cfg.pipeline.ocr_workers)
+        try:
+            self._failures = FailureStore(cfg.pipeline.failures_dir, cfg.pipeline.failures_ttl_h)
+            self.health = {c.id: Health() for c in cfg.cameras}
+            self._aggregators = {c.id: Aggregator(c, cfg.pipeline, self._failures) for c in cfg.cameras}
+            self._runners = {
+                c.id: CameraRunner(c, cfg.pipeline, sources[c.id], detectors[c.id], self.dispatcher,
+                                   self.health[c.id])
+                for c in cfg.cameras
+            }
+            self._api_keys = {c.id: c.api_key for c in cfg.cameras}
+        except BaseException:
+            self.dispatcher.shutdown()      # nada de pool órfão se a montagem falhar no meio
+            raise
 
     def start(self, warmup_timeout_s: float = 120.0) -> None:
         # Aquece o pool de OCR (spawn + carga do PaddleOCR) antes de abrir as câmeras.
-        self.dispatcher.wait_ready(warmup_timeout_s)
+        if not self.dispatcher.wait_ready(warmup_timeout_s, stop_event=self.stop_event):
+            if self.stop_event.is_set():
+                log.warning("Parada pedida durante o aquecimento do OCR; as câmeras não foram abertas")
+                return
+            reason = self.dispatcher.failure_reason or f"o pool não ficou pronto em {warmup_timeout_s:.0f} s"
+            raise RuntimeError(
+                f"O pool de OCR não aqueceu: {reason}. O coletor não abre as câmeras sem OCR "
+                "(verifique a instalação do PaddleOCR e a memória disponível).")
         for camera in self.cfg.cameras:
             thread = threading.Thread(target=self._camera_loop, args=(camera.id,), name=f"camera-{camera.id}", daemon=True)
             thread.start()

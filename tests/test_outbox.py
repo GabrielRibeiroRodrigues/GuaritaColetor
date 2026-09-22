@@ -94,3 +94,32 @@ def test_purge_delivered(box):
     assert box.purge_delivered(older_than_s=3600, now=1000.0 + 3601) == 1
     assert box.counts()["delivered"] == 0
     assert box.pending_count() == 1
+
+
+def test_mark_unexpected_backs_off_and_does_not_touch_attempts(box):
+    box.add(make_reading(1))
+    row_id = box.next_due().id
+    now = 1000.0
+    delays = []
+    for n in range(1, 10):
+        assert box.mark_unexpected(row_id, "erro", now=now) is False
+        row = box.next_due(now=now + 1e6)
+        assert row.unexpected_errors == n
+        assert row.attempts == 0
+        delays.append(row.unexpected_errors)
+        now += 1e6
+    assert box.mark_unexpected(row_id, "erro final", now=now) is True  # 10ª: falha de vez
+    assert box.next_due(now=now + 1) is None
+    assert box.counts() == {"pending": 0, "delivered": 0, "failed": 1}
+
+
+def test_mark_unexpected_and_mark_retry_count_separately(box):
+    box.add(make_reading(1))
+    row_id = box.next_due().id
+    now = 1000.0
+    box.mark_retry(row_id, "rede", now=now)
+    now += 1e6
+    box.mark_unexpected(row_id, "bug", now=now)
+    now += 1e6
+    row = box.next_due(now=now + 1)
+    assert (row.attempts, row.unexpected_errors) == (1, 1)
