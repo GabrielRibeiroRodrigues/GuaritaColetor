@@ -37,9 +37,11 @@ def cmd_run(args) -> int:
     detector = PlateDetector(cfg.detector.weights, cfg.detector.imgsz, cfg.detector.conf,
                              tracker_yaml=cfg.detector.tracker_yaml)
 
+    mp_context = multiprocessing.get_context("spawn")  # ver comentário em __main__.py
+
     def executor_factory():
         return ProcessPoolExecutor(max_workers=cfg.pipeline.ocr_workers, initializer=init_worker,
-                                   initargs=(make_paddle_engine,))
+                                   initargs=(make_paddle_engine,), mp_context=mp_context)
 
     samples: list[float] = []
     stop = threading.Event()

@@ -102,8 +102,11 @@ def cmd_pool(args) -> int:
     from guarita.ocr.engine import make_paddle_engine
     from guarita.ocr.worker import OcrJob, init_worker
 
+    mp_context = multiprocessing.get_context("spawn")  # ver comentário em __main__.py
+
     def executor_factory():
-        return ProcessPoolExecutor(max_workers=1, initializer=init_worker, initargs=(make_paddle_engine,))
+        return ProcessPoolExecutor(max_workers=1, initializer=init_worker, initargs=(make_paddle_engine,),
+                                   mp_context=mp_context)
 
     print("Aquecendo o pool real (spawn + carga do PaddleOCR)…")
     started = time.perf_counter()
@@ -199,8 +202,11 @@ def cmd_e2e(args) -> int:
     camera = CameraConfig("cam-01", "entrada", "", "")
     cfg = PipelineConfig(close_after_s=1.5, max_crops=3)
 
+    mp_context = multiprocessing.get_context("spawn")  # ver comentário em __main__.py
+
     def executor_factory():
-        return ProcessPoolExecutor(max_workers=1, initializer=init_worker, initargs=(make_paddle_engine,))
+        return ProcessPoolExecutor(max_workers=1, initializer=init_worker, initargs=(make_paddle_engine,),
+                                   mp_context=mp_context)
 
     outbox_path = Path("data") / "smoke_e2e.sqlite"
     outbox_path.parent.mkdir(exist_ok=True)

@@ -48,9 +48,16 @@ def main(argv=None) -> int:
     for sig in (signal.SIGINT, signal.SIGTERM):
         signal.signal(sig, lambda *_: stop.set())
 
+    # mp_context explícito: por padrão o Linux usa "fork", que copia as threads (câmeras, envio,
+    # supervisor) já abertas no processo pai para dentro de cada worker — não é seguro aqui (o
+    # processo já importou torch/paddle e abriu threads antes do pool existir). No Windows o spawn
+    # já é obrigatório; fixar isso deixa o comportamento igual se um dia isto rodar em Linux.
+    mp_context = multiprocessing.get_context("spawn")
+
     def executor_factory():
         return ProcessPoolExecutor(
-            max_workers=cfg.pipeline.ocr_workers, initializer=init_worker, initargs=(make_paddle_engine,))
+            max_workers=cfg.pipeline.ocr_workers, initializer=init_worker, initargs=(make_paddle_engine,),
+            mp_context=mp_context)
 
     app = None
     try:
