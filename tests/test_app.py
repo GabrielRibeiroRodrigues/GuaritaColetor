@@ -145,6 +145,31 @@ def test_construction_shuts_the_pool_down_when_setup_fails_after_the_dispatcher(
     assert shutdown_calls == [True]
 
 
+def test_app_passes_on_frame_to_every_camera_runner(tmp_path, api):
+    calls = []
+
+    def hook(camera_id, img, detections):
+        calls.append(camera_id)
+
+    cfg = Config(
+        api=ApiConfig(base_url=api.base_url), detector=DetectorConfig(),
+        pipeline=PipelineConfig(failures_dir=str(tmp_path / "falhas")),
+        outbox=OutboxConfig(path=str(tmp_path / "o.sqlite")),
+        cameras=(CameraConfig("cam-01", "entrada", "", "KEY"),),
+    )
+    outbox = Outbox(cfg.outbox.path)
+
+    def executor_factory():
+        return ThreadPoolExecutor(max_workers=1, initializer=worker.init_worker, initargs=(lambda: FakeEngine(),))
+
+    app = App(cfg, source_factory=lambda cam: ScriptedSource([]), detector_factory=lambda cam: ScriptedDetector([]),
+              executor_factory=executor_factory, client=ApiClient(api.base_url), outbox=outbox, on_frame=hook)
+    try:
+        assert app._runners["cam-01"]._on_frame is hook
+    finally:
+        outbox.close()
+
+
 def test_stop_always_shuts_the_dispatcher_down_even_when_steps_fail(tmp_path, api):
     app, outbox = make_app(tmp_path, api)
     calls = []

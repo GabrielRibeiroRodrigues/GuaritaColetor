@@ -16,6 +16,7 @@ from .detect import PlateDetector
 from .ocr.engine import make_paddle_engine
 from .ocr.worker import init_worker
 from .outbox import Outbox
+from .preview import FrameStore, PreviewServer
 from .sender import ApiClient
 
 
@@ -54,6 +55,13 @@ def main(argv=None) -> int:
     # já é obrigatório; fixar isso deixa o comportamento igual se um dia isto rodar em Linux.
     mp_context = multiprocessing.get_context("spawn")
 
+    # Página local de vídeo ao vivo, para validar o coletor em teste presencial sem depender de
+    # internet — desligada por padrão (custo zero) e ligada só com GUARITA_PREVIEW=1.
+    preview_enabled = os.environ.get("GUARITA_PREVIEW") == "1"
+    frame_store = FrameStore() if preview_enabled else None
+    on_frame = frame_store.update if frame_store else None
+    preview_server = None
+
     def executor_factory():
         return ProcessPoolExecutor(
             max_workers=cfg.pipeline.ocr_workers, initializer=init_worker, initargs=(make_paddle_engine,),
@@ -70,9 +78,14 @@ def main(argv=None) -> int:
             client=ApiClient(cfg.api.base_url, cfg.api.timeout_s),
             outbox=outbox,
             stop_event=stop,
+            on_frame=on_frame,
         )
         log.info("Coletor iniciado (%d câmera(s))", len(cfg.cameras))
         app.start()
+        if preview_enabled:
+            preview_server = PreviewServer(frame_store, [c.id for c in cfg.cameras],
+                                            port=int(os.environ.get("GUARITA_PREVIEW_PORT", "8888")))
+            preview_server.start()
         stop.wait()
     except (RuntimeError, FileNotFoundError) as exc:
         # Sem OCR ou sem pesos o coletor não tem função. Sai com 3 para que o gerenciador de serviço
@@ -82,6 +95,8 @@ def main(argv=None) -> int:
     finally:
         log.info("Encerrando…")
         stop.set()
+        if preview_server is not None:
+            preview_server.stop()
         try:
             if app is not None:
                 app.stop()

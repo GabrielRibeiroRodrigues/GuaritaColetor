@@ -16,7 +16,7 @@ log = logging.getLogger(__name__)
 
 class App:
     def __init__(self, cfg: Config, *, source_factory, detector_factory, executor_factory,
-                 client: ApiClient, outbox: Outbox, stop_event: threading.Event | None = None):
+                 client: ApiClient, outbox: Outbox, stop_event: threading.Event | None = None, on_frame=None):
         self.cfg = cfg
         self._client = client
         self._outbox = outbox
@@ -35,7 +35,7 @@ class App:
             self._aggregators = {c.id: Aggregator(c, cfg.pipeline, self._failures) for c in cfg.cameras}
             self._runners = {
                 c.id: CameraRunner(c, cfg.pipeline, sources[c.id], detectors[c.id], self.dispatcher,
-                                   self.health[c.id])
+                                   self.health[c.id], on_frame=on_frame)
                 for c in cfg.cameras
             }
             self._api_keys = {c.id: c.api_key for c in cfg.cameras}
